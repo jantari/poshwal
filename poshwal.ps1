@@ -1,4 +1,4 @@
-<#
+﻿<#
     .SYNOPSIS
     Generates and optionally applies a terminal theme from the colors found in an image.
 
