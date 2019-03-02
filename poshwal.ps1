@@ -427,8 +427,8 @@ $colorCounts = [System.Collections.Hashtable]::new()
 CONST char ESC 0x1b
 
 # Store the chosen colors from the image after removing too similar ones and sort them by prevalence
-$ColorsAfterKickingSimilars = [System.Collections.Generic.List[object]]::new()
-#$ColorsAfterKickingSimilars_Prevalences = @{}
+$eligibleColors = [System.Collections.Generic.List[object]]::new()
+#$eligibleColors_Prevalences = @{}
 
 # Initialize empty int-array with a size of 361 so we have all indexes from 0-360
 $hueCounts = New-Object -TypeName int[] -ArgumentList 361
@@ -459,30 +459,29 @@ foreach ($color in ($allColors.GetEnumerator() | Sort-Object { $colorCounts.Get_
     if ($colorCounts.Get_Item($color.Name) -gt 1) {
         $hueOfColor = [int]$color.Value.GetHue()
         $hueCounts[$hueOfColor] += $colorCounts.Get_Item($color.Name)
-        if (-not (Test-SimilarColorInArray -Array $ColorsAfterKickingSimilars -Color $color.Value) ) {
-            $ColorsAfterKickingSimilars.Add($color.Value)
+        if (-not (Test-SimilarColorInArray -Array $eligibleColors -Color $color.Value) ) {
+            $eligibleColors.Add($color.Value)
         }
     }
 }
 
-Write-Verbose "$($ColorsAfterKickingSimilars.Count) unique enough colors found in the image."
+Write-Verbose "$($eligibleColors.Count) unique enough colors found in the image."
 
 # Weeding out otherwise unfit colors (too low contrast etc)
 # Kick low saturation colors (all gray tones)
 # Remove nearly pitch black colors
+$eligibleColors.Where{ <#$_.GetSaturation() -lt 0.10 -or#> $_.GetBrightness() -lt 0.05 } |
+    ForEach-Object { $null = $eligibleColors.Remove($_)}
 
-$ColorsAfterKickingSimilars.Where{ <#$_.GetSaturation() -lt 0.10 -or#> $_.GetBrightness() -lt 0.05 } |
-    ForEach-Object { $null = $ColorsAfterKickingSimilars.Remove($_)}
-
-Write-Verbose "$($ColorsAfterKickingSimilars.Count) colors left after removing too dark (pitch black) ones."
+Write-Verbose "$($eligibleColors.Count) colors left after removing too dark (pitch black) ones."
 
 Write-Verbose 'Colors sorted by prevalence:'
-foreach ($color in $ColorsAfterKickingSimilars) {
+foreach ($color in $eligibleColors) {
     Write-ColorSample -Color $color -Stream Verbose
 }
 
 # Choosing a background color
-$backgroundColor = $ColorsAfterKickingSimilars | Sort-Object {
+$backgroundColor = $eligibleColors | Sort-Object {
     $colorHue = [int]$_.GetHue()
     $surroundingHuesPrevalence = ($hueCounts[($colorHue - 5)..($colorHue + 5)] | Measure-Object -Sum).Sum
     [float]$HuePrevalenceInImage = ( $surroundingHuesPrevalence / $img_totalPixels * 100)
@@ -502,13 +501,16 @@ $backgroundColor = $ColorsAfterKickingSimilars | Sort-Object {
     $HuePrevalenceInImage + $BrightnessFactor
 } | Select-Object -Last 1
 
+# Removing the chosen background color from the mix
+$null = $eligibleColors.Remove($backgroundColor)
+
 # More detail about the chosen background color
 $bgColorRoughHue = [int]$backgroundColor.GetHue()
 Write-Verbose "Hue of chosen background color makes up: $("{0:N2}" -f ($hueCounts[$bgColorRoughHue] / $img_totalPixels * 100))% of total image."
 Write-Verbose "Chosen background colors brightness is:  $($backgroundColor.GetBrightness())"
 
 # Choosing a primary text color
-$primaryTextColor = $ColorsAfterKickingSimilars | Sort-Object {
+$primaryTextColor = $eligibleColors | Sort-Object {
     $colorHue = [int]$_.GetHue()
     $surroundingHuesPrevalence = ($hueCounts[($colorHue - 5)..($colorHue + 5)] | Measure-Object -Sum).Sum
     [float]$HuePrevalenceInImage = ( $surroundingHuesPrevalence / $img_totalPixels * 100)
@@ -528,19 +530,18 @@ $primaryTextColor = $ColorsAfterKickingSimilars | Sort-Object {
     $HuePrevalenceInImage + $BrightnessFactor
 } | Select-Object -Last 1
 
-# Removing the chosen background and foreground colors from the mix
-$null = $ColorsAfterKickingSimilars.Remove($backgroundColor)
-$null = $ColorsAfterKickingSimilars.Remove($primaryTextColor)
+# Removing the chosen foreground color from the mix
+$null = $eligibleColors.Remove($primaryTextColor)
 
 # After having selected a background color, we remove all colors that are too close
 # to it in brightness (required difference configurable) to ensure some minimum contrast
-$ColorsAfterKickingSimilars.Where{
+$eligibleColors.Where{
     $_.GetBrightness() -gt ($backgroundColor.GetBrightness() - $RequiredBrightnessDifference) -and $_.GetBrightness() -lt ($backgroundColor.GetBrightness() + $RequiredBrightnessDifference)
-} | Foreach-Object { $null = $ColorsAfterKickingSimilars.Remove($_) }
+} | Foreach-Object { $null = $eligibleColors.Remove($_) }
 
-Write-Verbose "$($ColorsAfterKickingSimilars.Count) colors left after removing 1 background, 1 text color and colors with not enough brightness difference to the background."
+Write-Verbose "$($eligibleColors.Count) colors left after removing 1 background, 1 text color and colors with not enough brightness difference to the background."
 Write-Verbose 'Remaining colors sorted by prevalence:'
-$ColorsAfterKickingSimilars | ForEach-Object {
+$eligibleColors | ForEach-Object {
     Write-ColorSample -Color $_ -Stream Verbose
 }
 
@@ -565,7 +566,7 @@ $themeColorPalette = @(
 )
 
 if ($MapColorsByHue) {
-    $colorGroupsBySatandHue = $ColorsAfterKickingSimilars | Group-Object -Property { $_.GetBrightness() -gt 0.4 } | Sort-Object Count -Descending
+    $colorGroupsBySatandHue = $eligibleColors | Group-Object -Property { $_.GetBrightness() -gt 0.4 } | Sort-Object Count -Descending
     $colorGroupsBySatandHue | Select-Object Count, Name | Out-String | Write-Verbose
     $colorGroupsBySatandHue | ForEach-Object {
         $colorSamples = foreach ($color in $_.group) {
@@ -574,7 +575,7 @@ if ($MapColorsByHue) {
         Write-Verbose ($colorSamples -join " ")
     }
     # The function returns the colors it matched best
-    # from $ColorsAfterKickingSimilars in the order that they must go
+    # from $eligibleColors in the order that they must go
     # into the color palette
     $brightColorsPalette = Get-BestColorMatch -Colors $colorGroupsBySatandHue.Where{ $_.Name -eq 'true' }.Group -NoDuplicates
     $darkColorsPalette   = Get-BestColorMatch -Colors $colorGroupsBySatandHue.Where{ $_.Name -eq 'false' }.Group -NoDuplicates
@@ -609,30 +610,30 @@ if ($MapColorsByHue) {
     $themeColorPalette[6] = $darkColorsPalette[5]
 
     $brightColorsPalette | Sort-Object -Descending | ForEach-Object {
-        $null = $ColorsAfterKickingSimilars.Remove($_)
+        $null = $eligibleColors.Remove($_)
     }
     $darkColorsPalette | Sort-Object -Descending | ForEach-Object {
-        $null = $ColorsAfterKickingSimilars.Remove($_)
+        $null = $eligibleColors.Remove($_)
     }
 
-    $themeColorPalette[15] = $ColorsAfterKickingSimilars[7]
+    $themeColorPalette[15] = $eligibleColors[7]
 } else {
-    $themeColorPalette[1] = $ColorsAfterKickingSimilars[0]
-    $themeColorPalette[2] = $ColorsAfterKickingSimilars[1]
-    $themeColorPalette[3] = $ColorsAfterKickingSimilars[2]
-    $themeColorPalette[4] = $ColorsAfterKickingSimilars[3]
-    $themeColorPalette[5] = $ColorsAfterKickingSimilars[4]
-    $themeColorPalette[6] = $ColorsAfterKickingSimilars[5]
+    $themeColorPalette[1] = $eligibleColors[0]
+    $themeColorPalette[2] = $eligibleColors[1]
+    $themeColorPalette[3] = $eligibleColors[2]
+    $themeColorPalette[4] = $eligibleColors[3]
+    $themeColorPalette[5] = $eligibleColors[4]
+    $themeColorPalette[6] = $eligibleColors[5]
 
-    $themeColorPalette[9]  = $ColorsAfterKickingSimilars[7]
-    $themeColorPalette[10] = $ColorsAfterKickingSimilars[8]
-    $themeColorPalette[11] = $ColorsAfterKickingSimilars[9]
-    $themeColorPalette[12] = $ColorsAfterKickingSimilars[10]
-    $themeColorPalette[13] = $ColorsAfterKickingSimilars[11]
-    $themeColorPalette[14] = $ColorsAfterKickingSimilars[12]
-    $themeColorPalette[15] = $ColorsAfterKickingSimilars[13]
+    $themeColorPalette[9]  = $eligibleColors[7]
+    $themeColorPalette[10] = $eligibleColors[8]
+    $themeColorPalette[11] = $eligibleColors[9]
+    $themeColorPalette[12] = $eligibleColors[10]
+    $themeColorPalette[13] = $eligibleColors[11]
+    $themeColorPalette[14] = $eligibleColors[12]
+    $themeColorPalette[15] = $eligibleColors[13]
 }
-$themeColorPalette[8] = $ColorsAfterKickingSimilars[6]
+$themeColorPalette[8] = $eligibleColors[6]
 
 # Handling too few colors found:
 # if not enough colors are left to fill in all 16 required for a console theme:
@@ -644,9 +645,9 @@ if ($themeColorPalette.Contains($null)) {
                 # Append as many of the colors already in the list to the list again as needed to get to 14
                 $index = $themeColorPalette.IndexOf($null)
 
-                Write-Verbose "Warning: Had to reuse a color at position $index -> $($ColorsAfterKickingSimilars[$i].Name)"
-                $themeColorPalette[$index] = $ColorsAfterKickingSimilars[$i]
-                if (++$i -eq $ColorsAfterKickingSimilars.Count) {
+                Write-Verbose "Warning: Had to reuse a color at position $index -> $($eligibleColors[$i].Name)"
+                $themeColorPalette[$index] = $eligibleColors[$i]
+                if (++$i -eq $eligibleColors.Count) {
                     $i = 0
                 }
             }
