@@ -30,7 +30,7 @@ Simplest example:
 
 The script also accepts an image file over the pipeline:
 ```powershell
-Get-ChildItem "$env:USERPROFILE\Pictures\wallpapers" -Filter "*.jpg" | Get-Random | ./poshwal.ps1 -Apply -SetWallpaper 'Fill'
+ls "$env:USERPROFILE\Pictures" -Filter "*.jpg" | Get-Random | ./poshwal.ps1 -Apply -SetWallpaper 'Fill'
 ```
 
 If you wish to see more details on how a theme was decided on to tweak parameters for future runs, looking at the `-Verbose` output will be necessary:
