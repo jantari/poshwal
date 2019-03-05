@@ -1,9 +1,9 @@
 # poshwal
 
 
-Automatically generates and applies themes for the built-in Windows terminal (`conhost.exe`) based on the colors found in a picture.
+Automatically generates and applies themes for the built-in Windows terminal (`conhost.exe`) based on the colors found in an image.
 
-The name is a reference to [pywal](https://github.com/dylanaraps/pywal) and this script is supposed to provide a similar feature for the Windows platform. Albeit similar in name and function, it borrows no code or algorithms from pywal - I wanted to learn and create something of my own (this is also a good excuse for why it's not perfect I guess).
+Although the name is a reference to [pywal](https://github.com/dylanaraps/pywal) and this script is supposed to provide a similar feature for the Windows platform it borrows no code or algorithms from pywal - I wanted to learn and create something of my own (this is also a good excuse for why it's not perfect I guess).
 
 ## Syntax
 
@@ -21,7 +21,9 @@ The name is a reference to [pywal](https://github.com/dylanaraps/pywal) and this
     [<CommonParameters>]
 ```
 
-## Examples
+## Usage
+
+Download the latest release from [here](https://github.com/jantari/poshwal/releases/latest) and run:
 
 Simplest example:
 ```powershell
