@@ -195,6 +195,11 @@ function Get-BestColorMatch {
                 $SatDiff += 10
             }
 
+            # Put very dark colors at a disadvantage because their hue hardly matters
+            if ($Colors[$j].GetBrightness() -lt 0.10) {
+                $SatDiff += 10
+            }
+
             $diff = $HueDiff + $SatDiff * 45
 
             $diffMatrix[$i][$j] = $diff
@@ -308,7 +313,8 @@ function Test-SimilarColorInArray {
         $Array,
         [Parameter(Mandatory = $true)]
         $Color,
-        [hashtable]$CountPrevalence
+        [hashtable]$CountPrevalence,
+        [int[]]$CountHuePrevalence
     )
 
     $maxRGBdeviation = $SimilarColorThreshold * 255
@@ -349,10 +355,15 @@ function Test-SimilarColorInArray {
                 # A Color like this is already in hashtable
                 if ($CountPrevalence) {
                     if ($CountPrevalence.Contains($existingColor.Name)) {
-                        $CountPrevalence.Set_Item($existingColor.Name, $CountPrevalence.Get_Item($existingColor.Name) + 1)
+                        $CountPrevalence.Set_Item($existingColor.Name, $CountPrevalence.Get_Item($existingColor.Name) + $colorCounts.Get_Item($Color.Name))
                     } else {
-                        $CountPrevalence.Add($existingColor.Name, 1)
+                        $CountPrevalence.Add($existingColor.Name, $colorCounts.Get_Item($Color.Name))
                     }
+                }
+                
+                if ($CountHuePrevalence) {
+                    $hueOfColor = [int]$existingColor.GetHue()
+                    $hueCounts[$hueOfColor] += $colorCounts.Get_Item($color.Name)
                 }
                 return $true
             }
@@ -428,7 +439,7 @@ CONST char ESC 0x1b
 
 # Store the chosen colors from the image after removing too similar ones and sort them by prevalence
 $eligibleColors = [System.Collections.Generic.List[object]]::new()
-#$eligibleColors_Prevalences = @{}
+$eligibleColors_Prevalences = @{}
 
 # Initialize empty int-array with a size of 361 so we have all indexes from 0-360
 $hueCounts = New-Object -TypeName int[] -ArgumentList 361
@@ -455,11 +466,11 @@ for ($horizontalPixel = 0; $horizontalPixel -lt $SrcImg.Width; $horizontalPixel+
     }
 }
 
+Write-Verbose "Total pixels: $(($colorCounts.Values | Measure-Object -Sum).Sum)"
+
 foreach ($color in ($allColors.GetEnumerator() | Sort-Object { $colorCounts.Get_Item($_.Key) } -Descending ) ) {
     if ($colorCounts.Get_Item($color.Name) -gt 1) {
-        $hueOfColor = [int]$color.Value.GetHue()
-        $hueCounts[$hueOfColor] += $colorCounts.Get_Item($color.Name)
-        if (-not (Test-SimilarColorInArray -Array $eligibleColors -Color $color.Value) ) {
+        if (-not (Test-SimilarColorInArray -Array $eligibleColors -Color $color.Value -CountPrevalence $eligibleColors_Prevalences -CountHuePrevalence $hueCounts) ) {
             $eligibleColors.Add($color.Value)
         }
     }
@@ -470,20 +481,24 @@ Write-Verbose "$($eligibleColors.Count) unique enough colors found in the image.
 # Weeding out otherwise unfit colors (too low contrast etc)
 # Kick low saturation colors (all gray tones)
 # Remove nearly pitch black colors
-$eligibleColors.Where{ <#$_.GetSaturation() -lt 0.10 -or#> $_.GetBrightness() -lt 0.05 } |
-    ForEach-Object { $null = $eligibleColors.Remove($_)}
+$eligibleColors.Where{ $_.GetBrightness() -lt 0.05 } |
+    ForEach-Object { $null = $eligibleColors.Remove($_) }
 
 Write-Verbose "$($eligibleColors.Count) colors left after removing too dark (pitch black) ones."
 
 Write-Verbose 'Colors sorted by prevalence:'
 foreach ($color in $eligibleColors) {
-    Write-ColorSample -Color $color -Stream Verbose
+    $formattedPercent = "{0:00.00}" -f (($colorCounts.Get_Item($color.Name) + $eligibleColors_Prevalences.Get_Item($color.Name)) / $img_totalPixels * 100)
+    #Write-Host "prevalence score for this color: $( $eligibleColors_Prevalences.Get_Item($color.Name) ) - total score: $( $colorCounts.Get_Item($color.Name) + $eligibleColors_Prevalences.Get_Item($color.Name) )"
+    Write-Verbose "$ESC[48;2;$($Color.R);$($Color.G);$($Color.B)m        $ESC[0m $($Color.Name) - Hue makes up $formattedPercent% of total image"
 }
 
 # Choosing a background color
-$backgroundColor = $eligibleColors | Sort-Object {
+$backgroundColor = $eligibleColors | Where-Object {
+    (($colorCounts.Get_Item($_.Name) + $eligibleColors_Prevalences.Get_Item($_.Name)) / $img_totalPixels * 100) -gt 0.02
+} | Sort-Object {
     $colorHue = [int]$_.GetHue()
-    $surroundingHuesPrevalence = ($hueCounts[($colorHue - 5)..($colorHue + 5)] | Measure-Object -Sum).Sum
+    $surroundingHuesPrevalence = ($hueCounts[($colorHue - 4)..($colorHue + 4)] | Measure-Object -Sum).Sum
     [float]$HuePrevalenceInImage = ( $surroundingHuesPrevalence / $img_totalPixels * 100)
     if ($dbgOldBrightnessCurve) {
         [float]$BrightnessFactor = $_.GetBrightness() * 100
@@ -506,8 +521,15 @@ $null = $eligibleColors.Remove($backgroundColor)
 
 # More detail about the chosen background color
 $bgColorRoughHue = [int]$backgroundColor.GetHue()
-Write-Verbose "Hue of chosen background color makes up: $("{0:N2}" -f ($hueCounts[$bgColorRoughHue] / $img_totalPixels * 100))% of total image."
-Write-Verbose "Chosen background colors brightness is:  $($backgroundColor.GetBrightness())"
+Write-Verbose "Hue of background color makes up:     $("{0:N2}" -f ($hueCounts[$bgColorRoughHue] / $img_totalPixels * 100))% of total image."
+Write-Verbose "Total pixels of this color in image:  $($colorCounts.Get_Item($backgroundColor.Name)) ($($colorCounts.Get_Item($backgroundColor.Name) / $img_totalPixels * 100 )%)"
+Write-Verbose "Background colors brightness is:      $($backgroundColor.GetBrightness())"
+
+# After having selected a background color, we remove all colors that are too close
+# to it in brightness (required difference configurable) to ensure some minimum contrast
+$eligibleColors.Where{
+    $_.GetBrightness() -gt ($backgroundColor.GetBrightness() - $RequiredBrightnessDifference) -and $_.GetBrightness() -lt ($backgroundColor.GetBrightness() + $RequiredBrightnessDifference)
+} | Foreach-Object { $null = $eligibleColors.Remove($_) }
 
 # Choosing a primary text color
 $primaryTextColor = $eligibleColors | Sort-Object {
@@ -527,17 +549,44 @@ $primaryTextColor = $eligibleColors | Sort-Object {
         }
     }
     Write-Verbose ("Color $($_.Name) text color Score: {0} (Hue: {1}, Bri: {2})" -f ($HuePrevalenceInImage + $BrightnessFactor), $HuePrevalenceInImage, $BrightnessFactor)
-    $HuePrevalenceInImage + $BrightnessFactor
+    #$HuePrevalenceInImage + $BrightnessFactor
+    if ($HuePrevalenceInImage -lt 10) {
+        10 + $BrightnessFactor
+    } else {
+        30 + $BrightnessFactor
+    }
 } | Select-Object -Last 1
 
 # Removing the chosen foreground color from the mix
 $null = $eligibleColors.Remove($primaryTextColor)
 
-# After having selected a background color, we remove all colors that are too close
-# to it in brightness (required difference configurable) to ensure some minimum contrast
-$eligibleColors.Where{
-    $_.GetBrightness() -gt ($backgroundColor.GetBrightness() - $RequiredBrightnessDifference) -and $_.GetBrightness() -lt ($backgroundColor.GetBrightness() + $RequiredBrightnessDifference)
-} | Foreach-Object { $null = $eligibleColors.Remove($_) }
+$color15white = $eligibleColors | Sort-Object {
+    $colorHue = [int]$_.GetHue()
+    $surroundingHuesPrevalence = ($hueCounts[($colorHue - 5)..($colorHue + 5)] | Measure-Object -Sum).Sum
+    [float]$HuePrevalenceInImage = ( $surroundingHuesPrevalence / $img_totalPixels * 100)
+    if ($dbgOldBrightnessCurve) {
+        [float]$BrightnessFactor = $_.GetBrightness() * 100
+        if ($LightTheme) {
+            [float]$BrightnessFactor = 100 - $BrightnessFactor
+        }
+    } else {
+        if ($LightTheme) {
+            $BrightnessFactor = [Math]::Pow(1 - $_.GetBrightness(), 2) * 100
+        } else {
+            $BrightnessFactor = [Math]::Pow($_.GetBrightness(), 2) * 100
+        }
+    }
+    Write-Verbose ("Color $($_.Name) text color Score: {0} (Hue: {1}, Bri: {2})" -f ($HuePrevalenceInImage + $BrightnessFactor), $HuePrevalenceInImage, $BrightnessFactor)
+    #$HuePrevalenceInImage * 2 + $BrightnessFactor
+    if ($HuePrevalenceInImage -lt 10) {
+        10 + $BrightnessFactor
+    } else {
+        30 + $BrightnessFactor
+    }
+} | Select-Object -Last 1
+
+# Removing the chosen foreground color from the mix
+$null = $eligibleColors.Remove($color15white)
 
 Write-Verbose "$($eligibleColors.Count) colors left after removing 1 background, 1 text color and colors with not enough brightness difference to the background."
 Write-Verbose 'Remaining colors sorted by prevalence:'
@@ -562,7 +611,7 @@ $themeColorPalette = @(
     $null,             # Red
     $null,             # Magenta
     $null,             # Yellow
-    $null              # White
+    $color15white      # White
 )
 
 if ($MapColorsByHue) {
@@ -615,8 +664,6 @@ if ($MapColorsByHue) {
     $darkColorsPalette | Sort-Object -Descending | ForEach-Object {
         $null = $eligibleColors.Remove($_)
     }
-
-    $themeColorPalette[15] = $eligibleColors[7]
 } else {
     $themeColorPalette[1] = $eligibleColors[0]
     $themeColorPalette[2] = $eligibleColors[1]
@@ -631,7 +678,6 @@ if ($MapColorsByHue) {
     $themeColorPalette[12] = $eligibleColors[10]
     $themeColorPalette[13] = $eligibleColors[11]
     $themeColorPalette[14] = $eligibleColors[12]
-    $themeColorPalette[15] = $eligibleColors[13]
 }
 $themeColorPalette[8] = $eligibleColors[6]
 
