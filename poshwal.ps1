@@ -417,7 +417,7 @@ if ($SrcImg.Width -gt 400) {
     [double]$ratio  = $SrcImg.Height / $SrcImg.Width
     [int]$newWidth  = 400
     [int]$newHeight = 400 * $ratio
-    $SrcImg = $SrcImg.GetThumbnailImage($newWidth, $newHeight, $null, 2)
+    $SrcImg         = $SrcImg.GetThumbnailImage($newWidth, $newHeight, $null, 2)
 }
 
 [int]$img_totalPixels = $SrcImg.Width * $SrcImg.Height
@@ -497,9 +497,10 @@ foreach ($color in $eligibleColors) {
 $backgroundColor = $eligibleColors | Where-Object {
     (($colorCounts.Get_Item($_.Name) + $eligibleColors_Prevalences.Get_Item($_.Name)) / $img_totalPixels * 100) -gt 0.02
 } | Sort-Object {
-    $colorHue = [int]$_.GetHue()
-    $surroundingHuesPrevalence = ($hueCounts[($colorHue - 4)..($colorHue + 4)] | Measure-Object -Sum).Sum
-    [float]$HuePrevalenceInImage = ( $surroundingHuesPrevalence / $img_totalPixels * 100)
+    $colorHue            = [int]$_.GetHue()
+    $rawColorPrevalence  = ($colorCounts.Get_Item($_.Name) + $eligibleColors_Prevalences.Get_Item($_.Name)) /  $img_totalPixels * 100
+    $approxHuePrevalence = ($hueCounts[($colorHue - 4)..($colorHue + 4)] | Measure-Object -Sum).Sum
+    [float]$HuePrevalenceInImage = $approxHuePrevalence / $img_totalPixels * 100
     if ($dbgOldBrightnessCurve) {
         [float]$BrightnessFactor = $_.GetBrightness() * 100
         if (-not $LightTheme) {
@@ -513,7 +514,7 @@ $backgroundColor = $eligibleColors | Where-Object {
         }
     }
     Write-Verbose ("Color $($_.Name) Background Score: {0} (Hue: {1}, Bri: {2})" -f ($HuePrevalenceInImage + $BrightnessFactor), $HuePrevalenceInImage, $BrightnessFactor)
-    $HuePrevalenceInImage + $BrightnessFactor
+    $HuePrevalenceInImage + $BrightnessFactor + $rawColorPrevalence
 } | Select-Object -Last 1
 
 # Removing the chosen background color from the mix
