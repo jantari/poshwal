@@ -77,4 +77,4 @@ For more details please refer to the [Microsoft documentation](https://docs.micr
 
 1. If you do not specify an input image, the script will try to use your current wallpaper.
 2. If you are not happy with a generated theme from a particular image try different values for the `SimilarColorThreshold`, `RequiredBrightnessDifference` and `SimilarColorAlgorithm` parameters as well as possibly `-MapColorsByHue:$false` (consult `Get-Help`) - that said the algorithm is not magic and won't be able to pull a theme you love out of every image ☹ please try a few!
-3. The 'cpp_consoleattacher.exe' file is not neccessary for the script to function, it is only needed to re-color other already opened terminals on the fly.
+3. The 'cpp_consoleattacher.exe' file is not necessary for the script to function, it is only needed to re-color other already opened terminals on the fly.
